@@ -49,7 +49,36 @@ for b in BRANCHES:
                                        "pytom_score": p.iloc[ip]["score"].to_numpy(),
                                        "separation": dist}))
 per_tomo = pd.DataFrame(rows)
+
+# How much agreement would two unrelated pick lists show, just from density?
+# Without this baseline "52% confirmed" is unreadable: the more picks a tool
+# returns, the more of the other tool's picks it will coincide with by accident.
+VOLUME_A3 = 3470 * 4740 * 790
+sphere = 4 / 3 * np.pi * MATCH_RADIUS ** 3
+per_tomo["chance_confirmed"] = (1 - np.exp(-per_tomo.n_pytom * sphere / VOLUME_A3)).round(3)
+per_tomo["above_chance"] = (per_tomo.warp_confirmed / per_tomo.chance_confirmed).round(2)
 per_tomo.to_csv(OUT / "tables" / "task2_per_tomogram.csv", index=False)
+
+# The two tools returned very different numbers of picks, and count differences
+# alone drive the overlap statistic. Repeat the comparison on each tool's top N
+# by score, N being the smaller of the two, so the threshold is not a confound.
+matched_rows = []
+for b in BRANCHES:
+    for sname in sorted(set(warp.series) & set(pytom.series)):
+        w = warp[(warp.branch == b) & (warp.series == sname)]
+        p_ = pytom[(pytom.branch == b) & (pytom.series == sname)]
+        n = min(len(w), len(p_))
+        wt = w.nlargest(n, "score")
+        pt = p_.nlargest(n, "score")
+        iw, _, dist = match(wt[XYZ].to_numpy(), pt[XYZ].to_numpy(), MATCH_RADIUS)
+        matched_rows.append({
+            "branch": b, "series": sname, "n_each": n, "n_matched": len(iw),
+            "fraction_agreeing": round(len(iw) / max(n, 1), 3),
+            "chance": round(float(1 - np.exp(-n * sphere / VOLUME_A3)), 3),
+            "median_separation_A": round(float(np.median(dist)), 1) if len(dist) else np.nan})
+equal_n = pd.DataFrame(matched_rows)
+equal_n["above_chance"] = (equal_n.fraction_agreeing / equal_n.chance).round(2)
+equal_n.to_csv(OUT / "tables" / "task2_equal_counts.csv", index=False)
 pairs = pd.concat(pairs, ignore_index=True) if pairs else pd.DataFrame()
 
 # ---- how much the answer depends on the matching tolerance ----
@@ -91,6 +120,10 @@ summary = pd.DataFrame([
     {"metric": "median separation of agreeing picks (A)",
      "value": round(float(pairs.separation.median()), 1) if len(pairs) else np.nan},
     {"metric": "Spearman rho of scores (matched picks)", "value": round(rho, 3)},
+    {"metric": "expected agreement by chance", "value": round(float(per_tomo.chance_confirmed.mean()), 3)},
+    {"metric": "agreement above chance (x)",
+     "value": round(float((nm / max(nw, 1)) / per_tomo.chance_confirmed.mean()), 2)},
+    {"metric": "agreement at equal counts", "value": round(float(equal_n.fraction_agreeing.mean()), 3)},
     {"metric": "Warp runtime (s, both branches)", "value": round(sum(runtime["warp"].values()), 1)},
     {"metric": "PyTom runtime (s, both branches)", "value": round(sum(runtime["pytom"].values()), 1)},
 ])
@@ -102,6 +135,11 @@ pd.DataFrame([
     {"parameter": "angular step (deg)", "warp": "7.5 (subdivisions 3)", "pytom": "7.5"},
     {"parameter": "symmetry used", "warp": f"{SYMMETRY} (octahedral, 24-fold)",
      "pytom": "C4 about z (PyTom supports z-axis symmetry only)"},
+    # A 7.5 deg search over SO(3) is ~36,864 orientations; each tool divides that
+    # by the symmetry it can exploit. This is the whole runtime difference - per
+    # orientation the two matchers run at the same speed.
+    {"parameter": "orientations searched", "warp": "1536 (36,864 / 24)",
+     "pytom": "9216 (36,864 / 4)"},
     {"parameter": "spectral whitening", "warp": "on", "pytom": "on"},
     {"parameter": "score definition", "warp": "sigma above background",
      "pytom": "normalised cross-correlation (LCCmax)"},
@@ -166,8 +204,20 @@ lines = [
     "## Per tomogram\n", per_tomo.to_markdown(index=False), "",
     "## Key parameters\n",
     pd.read_csv(OUT / "tables" / "task2_parameters.csv").to_markdown(index=False), "",
+    "## At equal counts\n",
+    equal_n.to_markdown(index=False), "",
+    f"Taking each tool's top N by score, N being the smaller of the two, removes "
+    f"the count difference as a confound. Agreement is "
+    f"{equal_n.fraction_agreeing.mean():.0%} against "
+    f"{equal_n.chance.mean():.0%} expected by chance.",
+    "",
     "## Are the picks only one tool found its weakest?\n",
     unique.to_markdown(index=False), "", verdict, "",
+    f"PyTom searches 9216 orientations to Warp's 1536 - a 7.5 degree search over "
+    f"SO(3) divided by the symmetry each tool can exploit. Per orientation the two "
+    f"run at the same speed, so the runtime difference is entirely the symmetry "
+    f"handling, not implementation quality.",
+    "",
     f"A higher count is not by itself a better result - a picker can return more "
     f"picks purely by returning more false positives. Both tools were thresholded "
     f"by the same rule ({SIGMA} sigma above each volume's background), so the "

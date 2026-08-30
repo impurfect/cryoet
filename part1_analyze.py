@@ -30,14 +30,21 @@ def tomogram_quality():
         for tomo in sorted((bdir / "reconstruction").glob("*.mrc")):
             with mrcfile.open(tomo, permissive=True) as m:
                 vol = np.asarray(m.data, dtype=np.float32)
-            nz = vol.shape[0]
-            slab = vol[int(nz * 0.4):int(nz * 0.6)]
+            # Locate the specimen rather than assuming it sits mid-volume. The two
+            # aligners place it at different depths - about 80 A apart on this
+            # data - so measuring at nz//2 would compare one branch's sample
+            # against the other's empty ice.
+            per_slice = vol.std(axis=(1, 2))
+            centre = int(per_slice.argmax())
+            half = max(vol.shape[0] // 10, 3)
+            slab = vol[max(centre - half, 0):centre + half]
             rows.append({
                 "branch": b, "series": tomo.stem.split("_10.00Apx")[0],
+                "sample_centre_z": centre,
                 # spread of voxel values: a smeared tomogram tends to uniform grey
                 "contrast": float(slab.std() / (np.abs(slab).mean() + 1e-9)),
                 # variance of the Laplacian responds to edges, so it measures blur
-                "sharpness": float(ndimage.laplace(vol[nz // 2]).var()),
+                "sharpness": float(ndimage.laplace(vol[centre]).var()),
             })
     return pd.DataFrame(rows)
 
@@ -48,7 +55,7 @@ runtime = json.loads((OUT / "runtime_alignment.json").read_text())
 
 # One row per tilt series, both branches side by side.
 per_series = quality.pivot(index="series", columns="branch",
-                           values=["contrast", "sharpness"])
+                           values=["contrast", "sharpness", "sample_centre_z"])
 per_series.columns = [f"{m}_{b}" for m, b in per_series.columns]
 counts = picks.groupby(["series", "branch"]).size().unstack(fill_value=0)
 per_series["n_picks_etomo"] = counts["etomo"]

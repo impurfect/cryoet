@@ -4,6 +4,22 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 
+def read_movie(path):
+    """Average the frames of one raw movie into a single image.
+
+    These TIFFs are LZW-compressed, which tifffile can only decode with the
+    imagecodecs package installed. Pillow handles LZW through libtiff and is
+    already a dependency, so it stands in when imagecodecs is absent.
+    """
+    try:
+        import tifffile
+        a = tifffile.imread(path)
+    except Exception:
+        from PIL import ImageSequence
+        a = np.stack([np.asarray(f) for f in ImageSequence.Iterator(Image.open(path))])
+    return a.mean(0) if a.ndim == 3 else a
+
+
 def norm8(a, lo=0.5, hi=99.5):
     """Percentile-stretch to uint8. Stretch a whole volume at once, not each
     slice, or the brightness flickers through the movie."""

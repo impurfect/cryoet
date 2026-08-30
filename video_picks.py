@@ -13,11 +13,13 @@ from picks import pytom_picks, warp_picks
 from video import label, norm8, rgb, side_by_side, write
 
 FPS = 10
+SAVE_EVERY = 10                        # also write every Nth slice as a PNG
 BRANCH = "etomo"                       # tomograms held constant for Task 2
 R = DIAMETER / 2 / TOMO_ANGPIX         # particle radius in voxels
 
 sets = [("Warp", warp_picks(), (60, 255, 60)),
         ("PyTom", pytom_picks(), (255, 70, 70))]
+stills = OUT / "plots" / "annotated_slices"
 print("start")
 
 frames = []
@@ -36,8 +38,13 @@ for s in SERIES:
             for x, y in zip(near.x / TOMO_ANGPIX, near.y / TOMO_ANGPIX):
                 draw.ellipse([x - R, y - R, x + R, y + R], outline=colour, width=1)
             panes.append(label(np.asarray(im), f"{name}   {s}   z={z}   n={len(near)}"))
-        frames.append(side_by_side(*panes))
+        frame = side_by_side(*panes)
+        frames.append(frame)
+        if z % SAVE_EVERY == 0:
+            stills.mkdir(parents=True, exist_ok=True)
+            Image.fromarray(frame).save(stills / f"{s}_z{z:03d}.png")
     print(f"  {s}: {vol.shape[0]} slices")
 
 write(frames, OUT / "videos" / "picks_slices.mp4", FPS)
+print(f"stills -> {stills}")
 print("done")

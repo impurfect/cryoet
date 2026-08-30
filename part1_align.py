@@ -38,11 +38,12 @@ print(f"AreTomo2             {runtime['aretomo']} s")
 for b in BRANCHES:
     p = f"warp_tiltseries_{b}"
     warp("ts_defocus_hand", "--settings", S, "--input_processing", p, "--check")
-    warp("ts_ctf", "--settings", S, "--input_processing", p,
-         "--range_high", 7, "--defocus_max", 8, "--perdevice", PERDEVICE)
+    timed(f"ctf_{b}", "ts_ctf", "--settings", S, "--input_processing", p,
+          "--range_high", 7, "--defocus_max", 8, "--perdevice", PERDEVICE)
     timed(f"reconstruct_{b}", "ts_reconstruct", "--settings", S, "--input_processing", p,
           "--angpix", TOMO_ANGPIX, "--perdevice", PERDEVICE)
-    print(f"CTF + tomograms ({b})  {runtime[f'reconstruct_{b}']} s")
+    print(f"CTF ({b})  {runtime[f'ctf_{b}']} s"
+          f"   tomograms ({b})  {runtime[f'reconstruct_{b}']} s")
 
 OUT.mkdir(parents=True, exist_ok=True)
 (OUT / "runtime_alignment.json").write_text(json.dumps(runtime, indent=2))

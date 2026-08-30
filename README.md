@@ -51,7 +51,7 @@ template, thresholds, GPU. It is the only file to edit.
 ## Running it, in order
 
 ```bash
-python download.py          # ~3 GB, EMPIAR-10491 + EMD-15854
+python download.py          # ~3 GB, EMPIAR-10491 + EMD-15854; safe to re-run
 python preprocess.py        # motion correction, CTF, tilt-series grouping
 python part1_align.py       # both alignments + reconstruction
 python part2_warp.py        # Warp template matching, both branches
@@ -82,6 +82,10 @@ cutoff and the 65 Å match radius. Nothing else hard-codes a number.
 ### `download.py`
 Fetches the gain reference, the five `.mdoc` metadata files, the movies and the
 EMD-15854 template map.
+
+Safe to re-run: `wget -N` skips anything already on disk with an up-to-date
+timestamp, so pointing it at an existing `cryoet_data` re-verifies rather than
+re-downloads. It never deletes.
 
 The movie list comes from the `.mdoc` files rather than a wildcard. The tutorial's
 own script globs `*-11_*.tif`, which is ambiguous — this deposit contains both a
@@ -197,7 +201,9 @@ at 10 fps (set `FPS` at the top of each):
 - **`video_picks.py`** — the same slices with each picker's detections circled,
   Warp in green, PyTom in red. A pick is drawn on a slice when its centre is
   within one particle radius, so each particle appears across the slices it
-  spans.
+  spans. As well as the MP4 it writes every 10th slice as a PNG into
+  `results/plots/annotated_slices/` (change `SAVE_EVERY` at the top), which is
+  what you want for a report or a slide.
 
 ---
 
@@ -214,6 +220,7 @@ results/
 │   ├── task2_parameters.csv      what each picker was told to do
 │   └── task2_unique_vs_confirmed.csv
 ├── plots/                        8 PNGs
+│   └── annotated_slices/         picks circled on tomogram slices
 ├── videos/                       3 MP4s
 ├── task1_interpretation.md       written from the tables
 ├── task2_interpretation.md
