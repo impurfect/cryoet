@@ -1,0 +1,12 @@
+numpy
+pandas
+scipy
+matplotlib
+mrcfile
+starfile>=0.5.13     # earlier versions break on pandas 3
+tifffile             # reading the raw .tif movies
+imageio
+imageio-ffmpeg       # h264 encoding for the videos
+pillow
+tabulate             # DataFrame.to_markdown in the interpretations
+streamlit
