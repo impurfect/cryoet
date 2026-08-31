@@ -46,11 +46,20 @@ def residuals():
         (r"Residual error weighted mean:\s+([\d.]+)", "weighted mean residual", "px"),
         (r"Ratio of total measured values to all unknowns\s*=\s*([\d.]+)", "measured/unknowns", ""),
     ]
+    cols = ["branch", "series", "metric", "value", "unit", "source"]
     rows = []
     for b, bdir in BRANCHES.items():
-        for d in sorted((bdir / "tiltstack").glob("*")) if (bdir / "tiltstack").exists() else []:
+        dirs = sorted((bdir / "tiltstack").glob("*")) if (bdir / "tiltstack").is_dir() else []
+        if not dirs:
+            # AreTomo leaves no per-series log directory at all. Record that
+            # rather than returning an empty frame, which would have no columns
+            # and break every later reference to res.branch / res.value.
+            rows.append({"branch": b, "series": "", "metric": "no logs found",
+                         "value": np.nan, "unit": "", "source": ""})
+            continue
+        for d in dirs:
             found = False
-            for log in list(d.glob("*.log")) + list(d.glob("align.com")):
+            for log in sorted(d.glob("*.log")):
                 text = log.read_text(errors="ignore")
                 for pat, name, unit in patterns:
                     m = re.search(pat, text)
@@ -62,7 +71,7 @@ def residuals():
             if not found:
                 rows.append({"branch": b, "series": d.name, "metric": "not reported",
                              "value": np.nan, "unit": "", "source": ""})
-    return pd.DataFrame(rows)
+    return pd.DataFrame(rows, columns=cols)
 
 
 # ------------------------------------------------- 2. reconstruction quality
