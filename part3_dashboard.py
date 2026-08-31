@@ -45,41 +45,55 @@ with t1:
     st.header("IMOD etomo vs AreTomo2")
     st.markdown("Both branches share every step except alignment, so any "
                 "difference downstream is the aligner.")
-    table("task1_summary.csv")
+    table("part1_summary.csv")
+    st.subheader("Alignment residuals")
+    st.warning("Each method's own error. **Not comparable between methods** - IMOD "
+               "and AreTomo minimise different quantities on different scales.")
+    image("part1_alignment_residuals.png")
+    st.subheader("Reconstruction quality")
     a, b = st.columns(2)
     with a:
-        image("task1_tomogram_quality.png", "Reconstruction quality, one line per tilt series")
-        image("task1_runtime.png", "Alignment runtime")
+        image("part1_reconstruction_contrast.png")
+        image("part1_particles_found.png", "Downstream: particles found, and yield vs cutoff")
     with b:
-        image("task1_particle_yield.png", "Particles found, and yield vs cutoff")
-        image("task1_score_distributions.png", "Peak strength per alignment")
+        image("part1_reconstruction_sharpness.png")
+        image("part1_peak_scores.png", "Downstream: how strongly molecules stood out")
+    image("part1_runtime.png", "Alignment runtime")
     st.subheader("Per tilt series")
-    table("task1_per_series.csv")
+    table("part1_per_series.csv")
     video("alignment_slices.mp4", "Tomogram slices, both alignments side by side")
 
 with t2:
     st.header("Warp vs PyTom")
     st.markdown("Both pickers ran on the same tomograms with the same template, "
                 "particle diameter, angular step and peak cutoff.")
-    table("task2_summary.csv")
+    table("part2_summary.csv")
+    st.markdown("Two pickers x two alignment branches = **four pick sets**. The "
+                "pickers are compared within each branch, so the tomograms are "
+                "identical and only the program changes.")
+    image("part2_particle_counts.png", "1. Number of detected particles")
+    image("part2_spatial_overlap.png", "2. Spatial overlap, and its dependence on the tolerance")
+    image("part2_score_distributions.png", "3. Detection score distributions")
     a, b = st.columns(2)
     with a:
-        image("task2_counts.png", "Picks per tomogram")
-        image("task2_score_distributions.png", "Separate axes: the two scores are different quantities")
+        image("part2_runtime.png", "4. Runtime")
     with b:
-        image("task2_overlap_vs_radius.png", "How agreement depends on the matching tolerance")
-        image("task2_xy_example.png", "Pick positions in one tomogram")
+        image("part2_pick_positions.png", "Where the picks are")
     st.subheader("Per tomogram")
-    table("task2_per_tomogram.csv")
+    table("part2_per_tomogram.csv")
+    st.subheader("At equal counts")
+    st.caption("Each tool's top N by score, N the smaller of the two - removes the "
+               "count difference as a confound.")
+    table("part2_equal_counts.csv")
     st.subheader("Key parameters")
-    table("task2_parameters.csv")
+    table("part2_parameters.csv")
     st.subheader("Are the picks only one tool found its weakest?")
-    table("task2_unique_vs_confirmed.csv")
+    table("part2_unique_vs_confirmed.csv")
     video("picks_slices.mp4", "Warp (green) and PyTom (red) picks on the same slices")
 
 with t3:
     st.header("Conclusions")
-    for f in ["task1_interpretation.md", "task2_interpretation.md"]:
+    for f in ["part1_interpretation.md", "part2_interpretation.md"]:
         if (OUT / f).exists():
             st.markdown((OUT / f).read_text())
             st.divider()
@@ -88,4 +102,4 @@ with t4:
     st.header("The data")
     video("raw_frames.mp4", "Every raw tilt image in the dataset, in acquisition order")
     st.subheader("Radius sweep")
-    table("task2_radius_sweep.csv")
+    table("part2_radius_sweep.csv")

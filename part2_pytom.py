@@ -12,7 +12,8 @@ import time
 import mrcfile
 import numpy as np
 
-from config import DATA, OUT, BRANCHES, TOMO_ANGPIX, DIAMETER, SIGMA, GPUS
+from config import (BRANCHES, DATA, DIAMETER, GPUS, OUT, PYTOM_LOW_PASS,
+                    PYTOM_TOPHAT, SIGMA, TOMO_ANGPIX)
 
 PY = DATA / "pytom_picks"
 PY.mkdir(exist_ok=True)
@@ -41,10 +42,25 @@ for b, bdir in BRANCHES.items():
     t = time.time()
     for tomo in sorted((bdir / "reconstruction").glob("*.mrc")):
         name = tomo.stem.split("_10.00Apx")[0]
+
+        # Search only the slab that actually holds specimen. Warp does this for
+        # itself - it discards positions not covered by enough tilts - but PyTom
+        # searches the whole volume unless told otherwise, and reports thousands
+        # of detections in the empty ice above and below the sample. The slab is
+        # found from the tomogram: the slices with the most variation are the
+        # ones with something in them.
+        with mrcfile.open(tomo, permissive=True) as m:
+            vol = np.asarray(m.data, dtype=np.float32)
+        profile = vol.std(axis=(1, 2))
+        centre, half = int(profile.argmax()), max(vol.shape[0] // 5, 5)
+        z0, z1 = max(centre - half, 0), min(centre + half, vol.shape[0] - 1)
+
         subprocess.run(["pytom_match_template.py", "-t", str(template), "-m", str(mask),
                         "-v", str(tomo), "-d", str(out),
                         "--particle-diameter", str(DIAMETER), "--angular-search", "7.5",
-                        "--z-axis-rotational-symmetry", "4", "--low-pass", "20",
+                        "--z-axis-rotational-symmetry", "4",
+                        "--low-pass", str(PYTOM_LOW_PASS),
+                        "--search-z", str(z0), str(z1),
                         "--spectral-whitening", "--random-phase-correction",
                         "-g", GPUS, "--warp-xml-file", str(bdir / f"{name}.xml")], check=True)
 
@@ -52,11 +68,14 @@ for b, bdir in BRANCHES.items():
             d = np.asarray(m.data, dtype=np.float32)
         cutoff = float(d.mean() + SIGMA * d.std())
 
-        subprocess.run(["pytom_extract_candidates.py",
-                        "-j", str(out / f"{tomo.stem}_job.json"), "-n", "3000",
-                        "--particle-diameter", str(DIAMETER),
-                        "--cut-off", str(round(cutoff, 5))], check=True)
-        print(f"{b}/{name}  cutoff {cutoff:.4f}")
+        extract = ["pytom_extract_candidates.py",
+                   "-j", str(out / f"{tomo.stem}_job.json"), "-n", "3000",
+                   "--particle-diameter", str(DIAMETER),
+                   "--cut-off", str(round(cutoff, 5))]
+        if PYTOM_TOPHAT:
+            extract.append("--tophat-filter")
+        subprocess.run(extract, check=True)
+        print(f"{b}/{name}  z {z0}-{z1}  cutoff {cutoff:.4f}")
     runtime[b] = round(time.time() - t, 1)
     print(f"{b}  {runtime[b]} s")
 

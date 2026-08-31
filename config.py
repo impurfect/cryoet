@@ -27,6 +27,18 @@ DIAMETER = 130             # A
 SYMMETRY = "O"
 
 SIGMA = 3                  # peak cutoff, standard deviations above background
+
+# PyTom-specific. Warp sets its own equivalents internally.
+# Resolution limit for matching, in Angstroms. 20 A is Nyquist at 10 A/voxel, so
+# 20 means NO filtering - and combined with spectral whitening, which boosts high
+# frequencies, that amplifies the noisiest part of the spectrum. 30 keeps the
+# detail a 130 A shell actually has and drops the rest.
+PYTOM_LOW_PASS = 30
+
+# Keep only sharp, well-localised correlation peaks and reject broad diffuse
+# ones. This is tuning rather than a correction, so it is off by default: report
+# results with it on as "PyTom after tuning", alongside the default run.
+PYTOM_TOPHAT = False
 MATCH_RADIUS = 65          # A; two picks this close are the same particle
 GPUS = "0"
 PERDEVICE = 2
