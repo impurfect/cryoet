@@ -1,8 +1,16 @@
-"""Task 2: compare the two particle pickers.
+"""Part 2: compare the two particle pickers.
 
-Metrics, per the assessment: number of particles, spatial overlap between picks,
-score distributions, runtime and key parameters. Both pickers ran on the same
-tomograms, so the only variable is the program.
+Two pickers x two alignment branches = FOUR pick sets, and every metric below
+reports all four:
+
+  warp/etomo      warp/aretomo      pytom/etomo      pytom/aretomo
+
+The pickers are compared WITHIN each branch, because that is the controlled
+experiment: identical tomograms, only the program changes. Running it on both
+branches gives two independent replications of the same comparison.
+
+Metrics, as the assessment asks: number of detected particles, spatial overlap
+between picks, detection score distributions, runtime, and key parameters.
 """
 import json
 
@@ -12,227 +20,269 @@ import pandas as pd
 from scipy import stats
 
 import plotstyle
-from config import BRANCHES, DIAMETER, MATCH_RADIUS, OUT, SIGMA, SYMMETRY, TOMO_ANGPIX
+from config import (BRANCHES, DIAMETER, LABELS, MATCH_RADIUS, OUT, SIGMA,
+                    SYMMETRY, TEMPLATE_EMDB, TOMO_ANGPIX)
 from picks import match, pytom_picks, warp_picks
 from plotstyle import COLOR, save
 
 (OUT / "tables").mkdir(parents=True, exist_ok=True)
+XYZ = ["x", "y", "z"]
+SWEEP = [10, 20, 30, 40, 50, 65, 80, 100, 130, 160, 200]
+VOLUME_A3 = 3470 * 4740 * 790          # tomogram volume, for the chance baseline
 print("start")
 
-warp = warp_picks()
-pytom = pytom_picks()
-runtime = {"warp": json.loads((OUT / "runtime_warp_picking.json").read_text()),
-           "pytom": json.loads((OUT / "runtime_pytom_picking.json").read_text())}
-
-XYZ = ["x", "y", "z"]
+warp, pytom = warp_picks(), pytom_picks()
 warp["matched"] = False
 pytom["matched"] = False
+runtime = {"warp": json.loads((OUT / "runtime_warp_picking.json").read_text()),
+           "pytom": json.loads((OUT / "runtime_pytom_picking.json").read_text())}
+series = sorted(set(warp.series) & set(pytom.series))
 
-# ---- counts and spatial overlap, per branch and tilt series ----
+
+def sphere(r):
+    return 4 / 3 * np.pi * r ** 3
+
+
+# ------------------------------------------- 1. counts and 2. spatial overlap
 rows, pairs = [], []
 for b in BRANCHES:
-    for s in sorted(set(warp.series) & set(pytom.series)):
+    for s in series:
         w = warp[(warp.branch == b) & (warp.series == s)]
         p = pytom[(pytom.branch == b) & (pytom.series == s)]
         iw, ip, dist = match(w[XYZ].to_numpy(), p[XYZ].to_numpy(), MATCH_RADIUS)
         warp.loc[w.index[iw], "matched"] = True
         pytom.loc[p.index[ip], "matched"] = True
+        # what two unrelated lists of this density would agree on by accident
+        chance = float(1 - np.exp(-len(p) * sphere(MATCH_RADIUS) / VOLUME_A3))
         rows.append({"branch": b, "series": s, "n_warp": len(w), "n_pytom": len(p),
                      "n_matched": len(iw),
                      "jaccard": round(len(iw) / max(len(w) + len(p) - len(iw), 1), 3),
                      "warp_confirmed": round(len(iw) / max(len(w), 1), 3),
                      "pytom_confirmed": round(len(iw) / max(len(p), 1), 3),
+                     "chance": round(chance, 3),
+                     "above_chance": round(len(iw) / max(len(w), 1) / max(chance, 1e-9), 2),
                      "median_separation_A": round(float(np.median(dist)), 1) if len(dist) else np.nan})
         if len(iw):
-            pairs.append(pd.DataFrame({"branch": b,
+            pairs.append(pd.DataFrame({"branch": b, "series": s,
                                        "warp_score": w.iloc[iw]["score"].to_numpy(),
                                        "pytom_score": p.iloc[ip]["score"].to_numpy(),
                                        "separation": dist}))
 per_tomo = pd.DataFrame(rows)
-
-# How much agreement would two unrelated pick lists show, just from density?
-# Without this baseline "52% confirmed" is unreadable: the more picks a tool
-# returns, the more of the other tool's picks it will coincide with by accident.
-VOLUME_A3 = 3470 * 4740 * 790
-sphere = 4 / 3 * np.pi * MATCH_RADIUS ** 3
-per_tomo["chance_confirmed"] = (1 - np.exp(-per_tomo.n_pytom * sphere / VOLUME_A3)).round(3)
-per_tomo["above_chance"] = (per_tomo.warp_confirmed / per_tomo.chance_confirmed).round(2)
-per_tomo.to_csv(OUT / "tables" / "task2_per_tomogram.csv", index=False)
-
-# The two tools returned very different numbers of picks, and count differences
-# alone drive the overlap statistic. Repeat the comparison on each tool's top N
-# by score, N being the smaller of the two, so the threshold is not a confound.
-matched_rows = []
-for b in BRANCHES:
-    for sname in sorted(set(warp.series) & set(pytom.series)):
-        w = warp[(warp.branch == b) & (warp.series == sname)]
-        p_ = pytom[(pytom.branch == b) & (pytom.series == sname)]
-        n = min(len(w), len(p_))
-        wt = w.nlargest(n, "score")
-        pt = p_.nlargest(n, "score")
-        iw, _, dist = match(wt[XYZ].to_numpy(), pt[XYZ].to_numpy(), MATCH_RADIUS)
-        matched_rows.append({
-            "branch": b, "series": sname, "n_each": n, "n_matched": len(iw),
-            "fraction_agreeing": round(len(iw) / max(n, 1), 3),
-            "chance": round(float(1 - np.exp(-n * sphere / VOLUME_A3)), 3),
-            "median_separation_A": round(float(np.median(dist)), 1) if len(dist) else np.nan})
-equal_n = pd.DataFrame(matched_rows)
-equal_n["above_chance"] = (equal_n.fraction_agreeing / equal_n.chance).round(2)
-equal_n.to_csv(OUT / "tables" / "task2_equal_counts.csv", index=False)
+per_tomo.to_csv(OUT / "tables" / "part2_per_tomogram.csv", index=False)
 pairs = pd.concat(pairs, ignore_index=True) if pairs else pd.DataFrame()
 
-# ---- how much the answer depends on the matching tolerance ----
+# radius sweep, per branch
 sweep = []
-for r in [10, 20, 30, 40, 50, 65, 80, 100, 130, 160, 200]:
-    m = 0
-    for b in BRANCHES:
-        for s in sorted(set(warp.series) & set(pytom.series)):
+for b in BRANCHES:
+    for r in SWEEP:
+        m = nw = np_ = 0
+        for s in series:
             w = warp[(warp.branch == b) & (warp.series == s)][XYZ].to_numpy()
             p = pytom[(pytom.branch == b) & (pytom.series == s)][XYZ].to_numpy()
-            m += len(match(w, p, r)[0])
-    sweep.append({"radius_A": r, "radius_voxels": r / TOMO_ANGPIX, "n_matched": m,
-                  "jaccard": round(m / max(len(warp) + len(pytom) - m, 1), 3)})
+            m += len(match(w, p, r)[0]); nw += len(w); np_ += len(p)
+        sweep.append({"branch": b, "radius_A": r, "radius_voxels": r / TOMO_ANGPIX,
+                      "n_matched": m,
+                      "jaccard": round(m / max(nw + np_ - m, 1), 3),
+                      "warp_confirmed": round(m / max(nw, 1), 3)})
 sweep = pd.DataFrame(sweep)
-sweep.to_csv(OUT / "tables" / "task2_radius_sweep.csv", index=False)
+sweep.to_csv(OUT / "tables" / "part2_radius_sweep.csv", index=False)
 
-# ---- are the picks only one tool found its weakest ones? ----
-unique = []
-for name, df in [("warp", warp), ("pytom", pytom)]:
-    m, u = df[df.matched]["score"], df[~df.matched]["score"]
-    res = stats.mannwhitneyu(m, u, alternative="greater")
-    unique.append({"picker": name, "n_confirmed": len(m), "n_unique": len(u),
-                   "median_confirmed": round(float(m.median()), 4),
-                   "median_unique": round(float(u.median()), 4),
-                   "p_confirmed_higher": round(float(res.pvalue), 6),
-                   "prob_confirmed_beats_unique": round(res.statistic / (len(m) * len(u)), 3)})
-unique = pd.DataFrame(unique)
-unique.to_csv(OUT / "tables" / "task2_unique_vs_confirmed.csv", index=False)
+# the same comparison with the count difference removed
+eq = []
+for b in BRANCHES:
+    for s in series:
+        w = warp[(warp.branch == b) & (warp.series == s)]
+        p = pytom[(pytom.branch == b) & (pytom.series == s)]
+        n = min(len(w), len(p))
+        iw, _, dist = match(w.nlargest(n, "score")[XYZ].to_numpy(),
+                            p.nlargest(n, "score")[XYZ].to_numpy(), MATCH_RADIUS)
+        chance = float(1 - np.exp(-n * sphere(MATCH_RADIUS) / VOLUME_A3))
+        eq.append({"branch": b, "series": s, "n_each": n, "n_matched": len(iw),
+                   "fraction_agreeing": round(len(iw) / max(n, 1), 3),
+                   "chance": round(chance, 3),
+                   "above_chance": round(len(iw) / max(n, 1) / max(chance, 1e-9), 2)})
+equal_n = pd.DataFrame(eq)
+equal_n.to_csv(OUT / "tables" / "part2_equal_counts.csv", index=False)
 
-rho = float(stats.spearmanr(pairs.warp_score, pairs.pytom_score).statistic) if len(pairs) else np.nan
-nw, np_, nm = len(warp), len(pytom), int(per_tomo.n_matched.sum())
-summary = pd.DataFrame([
-    {"metric": "particles found by Warp", "value": nw},
-    {"metric": "particles found by PyTom", "value": np_},
-    {"metric": f"agreeing within {MATCH_RADIUS} A", "value": nm},
-    {"metric": "Jaccard overlap", "value": round(nm / max(nw + np_ - nm, 1), 3)},
-    {"metric": "Warp picks confirmed by PyTom", "value": round(nm / max(nw, 1), 3)},
-    {"metric": "PyTom picks confirmed by Warp", "value": round(nm / max(np_, 1), 3)},
-    {"metric": "median separation of agreeing picks (A)",
-     "value": round(float(pairs.separation.median()), 1) if len(pairs) else np.nan},
-    {"metric": "Spearman rho of scores (matched picks)", "value": round(rho, 3)},
-    {"metric": "expected agreement by chance", "value": round(float(per_tomo.chance_confirmed.mean()), 3)},
-    {"metric": "agreement above chance (x)",
-     "value": round(float((nm / max(nw, 1)) / per_tomo.chance_confirmed.mean()), 2)},
-    {"metric": "agreement at equal counts", "value": round(float(equal_n.fraction_agreeing.mean()), 3)},
-    {"metric": "Warp runtime (s, both branches)", "value": round(sum(runtime["warp"].values()), 1)},
-    {"metric": "PyTom runtime (s, both branches)", "value": round(sum(runtime["pytom"].values()), 1)},
-])
-summary.to_csv(OUT / "tables" / "task2_summary.csv", index=False)
+# ------------------------------------------------------- 4. runtime, 4 values
+rt = pd.DataFrame([{"picker": k, "branch": b, "seconds": v,
+                    "seconds_per_tomogram": round(v / len(series), 1)}
+                   for k, d in runtime.items() for b, v in d.items()])
+rt.to_csv(OUT / "tables" / "part2_runtime.csv", index=False)
 
+# ------------------------------------------------------------- 5. parameters
 pd.DataFrame([
-    {"parameter": "template", "warp": f"EMD-{15854}", "pytom": f"EMD-{15854}"},
+    {"parameter": "template", "warp": f"EMD-{TEMPLATE_EMDB}", "pytom": f"EMD-{TEMPLATE_EMDB}"},
     {"parameter": "particle diameter (A)", "warp": DIAMETER, "pytom": DIAMETER},
     {"parameter": "angular step (deg)", "warp": "7.5 (subdivisions 3)", "pytom": "7.5"},
     {"parameter": "symmetry used", "warp": f"{SYMMETRY} (octahedral, 24-fold)",
      "pytom": "C4 about z (PyTom supports z-axis symmetry only)"},
-    # A 7.5 deg search over SO(3) is ~36,864 orientations; each tool divides that
-    # by the symmetry it can exploit. This is the whole runtime difference - per
-    # orientation the two matchers run at the same speed.
     {"parameter": "orientations searched", "warp": "1536 (36,864 / 24)",
      "pytom": "9216 (36,864 / 4)"},
+    {"parameter": "search region", "warp": "auto (drops positions with <3 tilts covering them)",
+     "pytom": "--search-z, set to the specimen slab"},
     {"parameter": "spectral whitening", "warp": "on", "pytom": "on"},
     {"parameter": "score definition", "warp": "sigma above background",
      "pytom": "normalised cross-correlation (LCCmax)"},
     {"parameter": "peak cutoff", "warp": f"{SIGMA} sigma",
      "pytom": f"mean + {SIGMA} x std of the correlation volume"},
-]).to_csv(OUT / "tables" / "task2_parameters.csv", index=False)
+]).to_csv(OUT / "tables" / "part2_parameters.csv", index=False)
 
-# ---- plots ----
-fig, ax = plt.subplots(figsize=(8, 3.4))
-lab = per_tomo.branch + "/" + per_tomo.series
+# ------------------------------------------------------------------ summary
+summary = []
+for b in BRANCHES:
+    t = per_tomo[per_tomo.branch == b]
+    nw, np_, nm = int(t.n_warp.sum()), int(t.n_pytom.sum()), int(t.n_matched.sum())
+    e = equal_n[equal_n.branch == b]
+    pr = pairs[pairs.branch == b] if len(pairs) else pairs
+    summary.append({
+        "branch": b, "n_warp": nw, "n_pytom": np_, "n_matched": nm,
+        "jaccard": round(nm / max(nw + np_ - nm, 1), 3),
+        "warp_confirmed": round(nm / max(nw, 1), 3),
+        "pytom_confirmed": round(nm / max(np_, 1), 3),
+        "chance": round(float(t.chance.mean()), 3),
+        "above_chance": round(float(nm / max(nw, 1) / t.chance.mean()), 2),
+        "agree_at_equal_counts": round(float(e.fraction_agreeing.mean()), 3),
+        "median_separation_A": round(float(pr.separation.median()), 1) if len(pr) else np.nan,
+        "spearman_rho": round(float(stats.spearmanr(pr.warp_score, pr.pytom_score).statistic), 3)
+        if len(pr) > 10 else np.nan,
+        "warp_runtime_s": runtime["warp"][b], "pytom_runtime_s": runtime["pytom"][b]})
+summary = pd.DataFrame(summary)
+summary.to_csv(OUT / "tables" / "part2_summary.csv", index=False)
+
+# are each tool's unique picks its weakest? tested per branch
+uni = []
+for b in BRANCHES:
+    for name, df in [("warp", warp), ("pytom", pytom)]:
+        d = df[df.branch == b]
+        m, u = d[d.matched]["score"], d[~d.matched]["score"]
+        if len(m) > 5 and len(u) > 5:
+            r = stats.mannwhitneyu(m, u, alternative="greater")
+            uni.append({"branch": b, "picker": name, "n_confirmed": len(m), "n_unique": len(u),
+                        "median_confirmed": round(float(m.median()), 4),
+                        "median_unique": round(float(u.median()), 4),
+                        "prob_confirmed_higher": round(r.statistic / (len(m) * len(u)), 3),
+                        "p": round(float(r.pvalue), 6)})
+unique = pd.DataFrame(uni)
+unique.to_csv(OUT / "tables" / "part2_unique_vs_confirmed.csv", index=False)
+
+# =================================================================== plots
+# 1. particle counts - all four sets
+fig, ax = plt.subplots(figsize=(9, 3.6))
 x = np.arange(len(per_tomo))
 ax.bar(x - 0.27, per_tomo.n_warp, 0.25, color=COLOR["warp"], label="Warp")
 ax.bar(x, per_tomo.n_matched, 0.25, color=COLOR["both"], label="agreeing")
 ax.bar(x + 0.27, per_tomo.n_pytom, 0.25, color=COLOR["pytom"], label="PyTom")
-ax.set_xticks(x); ax.set_xticklabels(lab, rotation=45, ha="right", fontsize=7)
-ax.set_ylabel("particles"); ax.legend()
-ax.set_title(f"picks per tomogram (agreement within {MATCH_RADIUS} A)")
-save(fig, "task2_counts.png")
+ax.set_xticks(x)
+ax.set_xticklabels(per_tomo.branch + "/" + per_tomo.series, rotation=45, ha="right", fontsize=7)
+ax.set_ylabel("particles detected"); ax.legend()
+ax.set_title("Number of detected particles, and how many the two agree on")
+save(fig, "part2_particle_counts.png")
 
+# 2. spatial overlap - per branch, and how it depends on the tolerance
+fig, axes = plt.subplots(1, 2, figsize=(9.5, 3.6))
+for b in BRANCHES:
+    d = sweep[sweep.branch == b]
+    axes[0].plot(d.radius_A, d.jaccard, "-o", color=COLOR[b], label=f"{LABELS[b]} tomograms")
+    axes[1].plot(d.radius_A, d.warp_confirmed, "-o", color=COLOR[b], label=f"{LABELS[b]} tomograms")
+for ax, ylab, title in [(axes[0], "Jaccard overlap", "Spatial overlap between pickers"),
+                        (axes[1], "fraction of Warp picks confirmed",
+                         "Warp picks with a PyTom pick nearby")]:
+    ax.axvline(MATCH_RADIUS, color="k", ls=":", lw=1)
+    ax.annotate(f"one particle\nradius ({MATCH_RADIUS} A)", (MATCH_RADIUS, 0.02),
+                fontsize=6.5, xytext=(4, 0), textcoords="offset points")
+    ax.set_xlabel("how close two picks must be to be the same particle (A)")
+    ax.set_ylabel(ylab); ax.set_ylim(0, 1); ax.set_title(title); ax.legend(fontsize=7)
+save(fig, "part2_spatial_overlap.png")
+
+# 3. score distributions - two scales, two branches, four sets
+fig, axes = plt.subplots(2, 2, figsize=(9.5, 6), sharex="col")
+for row, b in enumerate(BRANCHES):
+    for col, (name, df, unit) in enumerate(
+            [("Warp", warp, "sigma above background"),
+             ("PyTom", pytom, "normalised cross-correlation")]):
+        ax = axes[row, col]
+        d = df[df.branch == b]
+        bins = np.linspace(df.score.min(), df.score.max(), 45)
+        ax.hist(d[d.matched].score, bins=bins, alpha=0.65, color=COLOR[name.lower()],
+                label=f"confirmed (n={int(d.matched.sum())})")
+        ax.hist(d[~d.matched].score, bins=bins, alpha=0.65, color=COLOR["grey"],
+                label=f"{name} only (n={int((~d.matched).sum())})")
+        ax.legend(fontsize=6.5)
+        ax.set_title(f"{name} on {LABELS[b]} tomograms", fontsize=9)
+        if row == 1:
+            ax.set_xlabel(f"{name} score ({unit})")
+fig.suptitle("Detection score distributions - the two scores are different "
+             "quantities, never a shared axis", fontsize=9)
+save(fig, "part2_score_distributions.png")
+
+# 4. runtime - all four
 fig, ax = plt.subplots(figsize=(5.5, 3.4))
-ax.plot(sweep.radius_A, sweep.jaccard, "-o", color=COLOR["both"])
-ax.axvline(MATCH_RADIUS, color="k", ls=":", lw=1)
-ax.annotate(f"one particle radius\n({MATCH_RADIUS} A)", (MATCH_RADIUS, 0.02),
-            fontsize=7, xytext=(5, 0), textcoords="offset points")
-ax.set_xlabel("how close two picks must be to count as the same particle (A)")
-ax.set_ylabel("Jaccard overlap"); ax.set_ylim(0, 1)
-ax.set_title("sensitivity to the matching tolerance")
-save(fig, "task2_overlap_vs_radius.png")
+x = np.arange(len(BRANCHES)); wid = 0.35
+for i, k in enumerate(["warp", "pytom"]):
+    v = [runtime[k][b] for b in BRANCHES]
+    ax.bar(x + (i - 0.5) * wid, v, wid, color=COLOR[k], label=k.capitalize())
+    for xi, vi in zip(x + (i - 0.5) * wid, v):
+        ax.text(xi, vi, f"{vi:.0f}s", ha="center", va="bottom", fontsize=7)
+ax.set_xticks(x); ax.set_xticklabels([f"{LABELS[b]}\ntomograms" for b in BRANCHES])
+ax.set_ylabel(f"seconds, {len(series)} tomograms"); ax.legend()
+ax.set_title("Picking runtime")
+save(fig, "part2_runtime.png")
 
-fig, axes = plt.subplots(1, 2, figsize=(9, 3.4))
-for ax, name, df, unit in [(axes[0], "Warp", warp, "sigma above background"),
-                           (axes[1], "PyTom", pytom, "normalised cross-correlation")]:
-    bins = np.linspace(df.score.min(), df.score.max(), 45)
-    ax.hist(df[df.matched].score, bins=bins, alpha=0.65, color=COLOR[name.lower()],
-            label=f"confirmed by the other (n={int(df.matched.sum())})")
-    ax.hist(df[~df.matched].score, bins=bins, alpha=0.65, color=COLOR["grey"],
-            label=f"{name} only (n={int((~df.matched).sum())})")
-    ax.set_xlabel(f"{name} score ({unit})"); ax.legend(fontsize=7)
-    ax.set_title(f"{name}: are unique picks the weak ones?")
-save(fig, "task2_score_distributions.png")
+# 5. where the picks physically are, one tomogram per branch
+fig, axes = plt.subplots(1, 2, figsize=(9, 4.6))
+s0 = series[0]
+for ax, b in zip(axes, BRANCHES):
+    w = warp[(warp.branch == b) & (warp.series == s0)]
+    p = pytom[(pytom.branch == b) & (pytom.series == s0)]
+    ax.scatter(w.x, w.y, s=16, facecolors="none", edgecolors=COLOR["warp"], lw=0.7,
+               label=f"Warp (n={len(w)})")
+    ax.scatter(p.x, p.y, s=8, marker="x", color=COLOR["pytom"], lw=0.7,
+               label=f"PyTom (n={len(p)})")
+    ax.set_xlabel("x (A)"); ax.set_ylabel("y (A)")
+    ax.set_aspect("equal", "datalim"); ax.legend(fontsize=7)
+    ax.set_title(f"{s0} on {LABELS[b]} tomograms", fontsize=9)
+fig.suptitle("Where the detected particles are, looking down the beam", fontsize=9)
+save(fig, "part2_pick_positions.png")
 
-b, s = "etomo", sorted(set(warp.series))[0]
-w = warp[(warp.branch == b) & (warp.series == s)]
-p = pytom[(pytom.branch == b) & (pytom.series == s)]
-fig, ax = plt.subplots(figsize=(5, 5))
-ax.scatter(w.x, w.y, s=18, facecolors="none", edgecolors=COLOR["warp"], lw=0.8, label="Warp")
-ax.scatter(p.x, p.y, s=10, marker="x", color=COLOR["pytom"], lw=0.8, label="PyTom")
-ax.set_xlabel("x (A)"); ax.set_ylabel("y (A)"); ax.set_aspect("equal", "datalim")
-ax.legend(); ax.set_title(f"pick positions, {b}/{s}")
-save(fig, "task2_xy_example.png")
-
-# ---- interpretation ----
-probs = unique.prob_confirmed_beats_unique
-verdict = ("Confirmed - for both tools the picks the other missed score lower."
-           if (probs > 0.65).all() else
-           "Partly confirmed - unique picks score lower but the distributions overlap heavily."
-           if (probs > 0.55).all() else
-           "Not confirmed - the unique picks are not reliably the low-scoring ones.")
+# ---------------------------------------------------------- interpretation
 lines = [
-    "# Task 2 - particle-picking comparison\n",
-    summary.to_markdown(index=False), "",
-    "## Per tomogram\n", per_tomo.to_markdown(index=False), "",
-    "## Key parameters\n",
-    pd.read_csv(OUT / "tables" / "task2_parameters.csv").to_markdown(index=False), "",
-    "## At equal counts\n",
-    equal_n.to_markdown(index=False), "",
-    f"Taking each tool's top N by score, N being the smaller of the two, removes "
-    f"the count difference as a confound. Agreement is "
-    f"{equal_n.fraction_agreeing.mean():.0%} against "
-    f"{equal_n.chance.mean():.0%} expected by chance.",
-    "",
-    "## Are the picks only one tool found its weakest?\n",
-    unique.to_markdown(index=False), "", verdict, "",
-    f"PyTom searches 9216 orientations to Warp's 1536 - a 7.5 degree search over "
-    f"SO(3) divided by the symmetry each tool can exploit. Per orientation the two "
-    f"run at the same speed, so the runtime difference is entirely the symmetry "
-    f"handling, not implementation quality.",
-    "",
-    f"A higher count is not by itself a better result - a picker can return more "
-    f"picks purely by returning more false positives. Both tools were thresholded "
-    f"by the same rule ({SIGMA} sigma above each volume's background), so the "
-    f"counts are comparable, but they remain counts and not accuracy.",
-    "",
-    f"Agreement depends on how close two picks must be to count as the same "
-    f"molecule. Across {sweep.radius_A.min()}-{sweep.radius_A.max()} A the Jaccard "
-    f"overlap runs {sweep.jaccard.min():.2f} to {sweep.jaccard.max():.2f}; "
-    f"{MATCH_RADIUS} A, one apoferritin radius, gives "
-    f"{sweep[sweep.radius_A == MATCH_RADIUS].jaccard.iloc[0]:.2f}.",
-    "",
-    "Raw scores are never compared directly: Warp's is in standard deviations "
-    "above background, PyTom's is a correlation coefficient. Where the two are "
-    "compared it is by rank, which is scale-free.",
+    "# Part 2 - particle-picking comparison\n",
+    f"Two pickers on two alignment branches: four pick sets. The pickers are "
+    f"compared within each branch, so the tomograms are identical and only the "
+    f"program changes; running it on both branches replicates the comparison.\n",
+    "## Summary, per branch\n", summary.to_markdown(index=False), "",
+    "## Number of detected particles, per tomogram\n",
+    per_tomo.to_markdown(index=False), "",
+    "## Spatial overlap\n",
+    f"Two picks count as the same molecule when their centres are within "
+    f"{MATCH_RADIUS} A - one apoferritin radius. Beyond that the two spheres "
+    f"barely overlap and calling them the same particle stops meaning anything. "
+    f"Because that tolerance is the single most manipulable number here, the "
+    f"full curve from {min(SWEEP)} to {max(SWEEP)} A is published alongside it.\n",
+    f"`chance` is what two unrelated lists of the same density would agree on by "
+    f"accident: the denser a tool's picks, the more of the other's it coincides "
+    f"with for free. Without that baseline the confirmation rates are unreadable.\n",
+    "## At equal counts\n", equal_n.to_markdown(index=False), "",
+    f"Taking each tool's top N by score, N the smaller of the two, removes the "
+    f"count difference as a confound: agreement "
+    f"{equal_n.fraction_agreeing.mean():.0%} against {equal_n.chance.mean():.0%} "
+    f"by chance ({equal_n.above_chance.mean():.1f}x).", "",
+    "## Detection scores\n", unique.to_markdown(index=False), "",
+    "`prob_confirmed_higher` is the chance a confirmed pick outscores a unique "
+    "one; 0.5 means no relationship. Above 0.5 means the tool's own ranking "
+    "agrees with the other tool's opinion, so its scores are informative even "
+    "where its threshold is not.", "",
+    "## Runtime and parameters\n", rt.to_markdown(index=False), "",
+    pd.read_csv(OUT / "tables" / "part2_parameters.csv").to_markdown(index=False), "",
+    "PyTom searches 9216 orientations to Warp's 1536 - a 7.5 degree search over "
+    "SO(3) divided by the symmetry each can exploit. Per orientation the two run "
+    "at the same speed, so the runtime gap is symmetry handling, not "
+    "implementation quality.", "",
+    "A higher count is not by itself a better result: a picker can return more "
+    "picks purely by returning more false positives. Counts are counts, not "
+    "accuracy.",
 ]
-(OUT / "task2_interpretation.md").write_text("\n".join(lines))
+(OUT / "part2_interpretation.md").write_text("\n".join(lines))
 print(summary.to_string(index=False))
 print("done")

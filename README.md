@@ -150,35 +150,53 @@ is a correlation coefficient.
 nearest neighbour. Nearest neighbour double-counts, and first-come-first-served
 makes the answer depend on the order rows appear in the file.
 
-### `part1_analyze.py` — Task 1 analysis
-Writes `results/tables/task1_*.csv`, four plots, and `task1_interpretation.md`.
+### `part1_analyze.py` — Part 1 analysis
+Writes `results/tables/part1_*.csv`, six plots, and `part1_interpretation.md`.
+The four metric groups the assessment names:
 
-| metric | why |
+| output | metric | note |
+|---|---|---|
+| `part1_alignment_residuals.png` | **alignment residuals** | each method's own error. **Never compared between methods** — IMOD reports mean tracked-patch position error, AreTomo exposes no per-series equivalent, and the two minimise different objectives |
+| `part1_reconstruction_contrast.png` | **reconstruction quality** | spread of voxel values; a smeared tomogram tends to uniform grey |
+| `part1_reconstruction_sharpness.png` | **reconstruction quality** | variance of the Laplacian, the standard blur measure |
+| `part1_particles_found.png` | downstream effect | particles found per series, plus yield vs cutoff |
+| `part1_peak_scores.png` | downstream effect | how strongly molecules stood out — the decisive metric |
+| `part1_runtime.png` | **runtime** | wall clock for 5 tilt series |
+
+Both reconstruction measures locate the specimen by per-slice variance rather
+than assuming it sits mid-volume: the two aligners place it about 80 Å apart in
+z, so a fixed slice would compare one branch's sample against the other's ice.
+
+Comparisons are **paired** across the five tilt series. With five pairs a
+Wilcoxon test cannot reach p<0.05 even when every pair agrees — 0.0625 is its
+floor — so the evidence is consistency of direction, reported as "4/5 series".
+
+### `part2_analyze.py` — Part 2 analysis
+Two pickers × two alignment branches = **four pick sets**, and every metric
+reports all four. The pickers are compared *within* each branch, which is the
+controlled experiment — identical tomograms, only the program changes — and
+running it on both branches replicates that comparison.
+
+| output | metric |
 |---|---|
-| tomogram contrast | a smeared reconstruction tends towards uniform grey |
-| tomogram sharpness | variance of the Laplacian — the standard blur measure |
-| particles found | a blurred molecule is harder to detect |
-| top-50 peak score | the decisive one: how clearly molecules stood out |
-| runtime | practical cost |
+| `part2_particle_counts.png` | **number of detected particles**, all four sets, plus how many agree |
+| `part2_spatial_overlap.png` | **spatial overlap**, per branch, against matching tolerance |
+| `part2_score_distributions.png` | **detection score distributions**, 2 branches × 2 pickers |
+| `part2_runtime.png` | **runtime**, all four |
+| `part2_pick_positions.png` | where the picks physically sit, per branch |
+| `part2_parameters.csv` | **key parameters**, side by side |
 
-Comparisons are **paired** across the five tilt series, since both methods saw
-the same five. With five pairs a Wilcoxon test cannot reach p<0.05 even when
-every pair agrees — 0.0625 is its floor — so the evidence is consistency of
-direction, reported as "4/5 series".
+Three things it does deliberately:
 
-### `part2_analyze.py` — Task 2 analysis
-Writes `results/tables/task2_*.csv`, four plots, and `task2_interpretation.md`:
-particle counts, spatial overlap, score distributions, runtime and a side-by-side
-parameter table — the metrics the assessment asks for.
-
-Two things it does deliberately:
-
-- **Sweeps the matching tolerance** from 10 to 200 Å instead of quoting one
-  number. "How close counts as the same particle" is the most manipulable value
-  in the whole comparison; the operating point is 65 Å, one apoferritin radius,
-  and the full curve is published beside it.
-- **Tests** whether each tool's unique picks are its weakest, rather than
-  asserting it, with a Mann-Whitney U and a common-language effect size.
+- **Sweeps the matching tolerance** from 10 to 200 Å. "How close counts as the
+  same particle" is the most manipulable number in the comparison — quote 200 Å
+  and everything agrees, quote 10 Å and nothing does. The operating point is
+  65 Å, one apoferritin radius, and the whole curve is published beside it.
+- **Reports a chance baseline.** The denser a tool's picks, the more of the
+  other's it coincides with for free. Without `chance` and `above_chance` the
+  confirmation rates are unreadable.
+- **Compares at equal counts too** — each tool's top N by score, N the smaller
+  of the two — so the count difference stops driving the overlap statistic.
 
 ### `part3_dashboard.py` — Task 3
 Streamlit page: alignment metrics, picking metrics, conclusions, and the videos.
@@ -212,14 +230,17 @@ at 10 fps (set `FPS` at the top of each):
 ```
 results/
 ├── tables/                       every measurement, as CSV
-│   ├── task1_summary.csv         paired comparison of the two alignments
-│   ├── task1_per_series.csv      the raw numbers behind it
-│   ├── task2_summary.csv         headline picking numbers
-│   ├── task2_per_tomogram.csv    counts and overlap, per tomogram
-│   ├── task2_radius_sweep.csv    agreement vs matching tolerance
-│   ├── task2_parameters.csv      what each picker was told to do
-│   └── task2_unique_vs_confirmed.csv
-├── plots/                        8 PNGs
+│   ├── part1_summary.csv         paired comparison of the two alignments
+│   ├── part1_per_series.csv      the raw numbers behind it
+│   ├── part1_alignment_residuals.csv
+│   ├── part2_summary.csv         headline picking numbers, per branch
+│   ├── part2_per_tomogram.csv    counts and overlap, all four sets
+│   ├── part2_radius_sweep.csv    agreement vs matching tolerance, per branch
+│   ├── part2_equal_counts.csv    the same comparison with counts equalised
+│   ├── part2_runtime.csv         all four runtimes
+│   ├── part2_parameters.csv      what each picker was told to do
+│   └── part2_unique_vs_confirmed.csv
+├── plots/                        11 PNGs
 │   └── annotated_slices/         picks circled on tomogram slices
 ├── videos/                       3 MP4s
 ├── task1_interpretation.md       written from the tables
